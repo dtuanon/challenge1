@@ -70,12 +70,11 @@ def find_match_and_print_one_article(filename, result_dir, words, W , S, H, in_b
 					#index_bag	= cyth_query.it_query(art, words, sizes, len_w, match_idx, end, n)
 					if index_bag:
 						Count.value += len(index_bag)
-						sequences = [art[start:end] for start, end in index_bag]
+						sequence = [art[start:end] for start, end in index_bag]
 	if should_print:
 		with open(result_dir, "w") as f:
-				for matches in sequences:
-					for match in matches:
-						f.write(match + "\n")
+				for match in sequence:
+					f.write(match + "\n")
 
 def main(query, file_queue, result_dir, should_print):
 	# we might get a small speed up by only importing modules within functions
