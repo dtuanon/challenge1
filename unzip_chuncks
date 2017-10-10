@@ -1,0 +1,97 @@
+#!/bin/bash
+
+# about dd:
+
+# https://www.gnu.org/software/coreutils/manual/html_node/dd-invocation.html
+
+#
+
+#################################################
+
+# understanding # #> 
+# > file redirects stdout to file
+# 1> file redirects stdout to file
+#2> file redirects stderr to file
+#&> file redirects stdout and stderr to file
+
+
+# /dev/null is the null device it takes any input you want and throws it away. It can be used to suppress any output.
+
+# Thus 2> /dev/null redirect anyuthing from stderr and ignores it
+
+#################################################
+
+# question: include stuff such as templates etc....?
+
+bzippedfile=../zipped_data/enwiki-20170820-pages-articles-multistream.xml.bz2
+dir_to_save=../unzipped_data/all_wiki
+start=0
+end=0
+let n_blocks=0
+let count_lines=0
+xml_query='/doc/page[not(redirect) and (./ns = 0)]//text'
+index_file=../zipped_data/enwiki-20170820-pages-articles-multistream-index.txt
+
+# get roughly 8 equally large files per cores (8)
+articles_for_cores=$((17000000 / 255))
+# pass output from cut using process substitution otherwise variable insode the while loop is not shared outside the loop.
+while read -r line; do
+	if [[ $(($count_lines % $articles_for_cores)) == 0 ]] ; then
+		end=$line
+		if [[ $count_lines > 0 ]] ; then
+			let n_blocks++
+			# $((arithmatic expression)) does calculations
+			outfile=$dir_to_save/block_$((n_blocks)).xml
+			# count the offset ie. how many bytes to take out.
+			let off_set=$end-$start
+			dd if=$bzippedfile of=$outfile.bz2 skip=$start count=$off_set status='none' iflag=skip_bytes,count_bytes
+			# recover the .bz2 files
+			bzip2recover $outfile.bz2 2>/dev/null
+			# decompress
+			lbzip2 -dc $dir_to_save/rec*block_$((n_blocks))*.bz2 > $outfile
+			
+			rm $dir_to_save/*.bz2
+
+			sed -i $'1 s/^/<doc>\\\n/' $outfile
+			echo "</doc>" >> $outfile
+
+			preprocessed_file=../preprocessed_data/all_wiki/block_$((n_blocks))_article_txt.txt
+
+			# xmlstarlet is really SLOW use xmllint
+			xmllint --xpath "$xml_query" $outfile | tr "[A-Z]\r\n" "[a-z]  " | sed -e $'s/<text xml:space="preserve">/\\\n/g' | sed 's/<\/text>//g' > $preprocessed_file
+			
+			# remove .xml files to free physical memory
+			rm $outfile
+		fi
+		start=$end
+		
+		# if statement used for debugging
+		
+		#if [[ $n_blocks == 1 ]] ; then
+		#	break
+		#fi
+		
+	fi
+	
+	let count_lines++
+
+done < <( cut -d : -f 1 $index_file)
+# once reached end of the line do a final splitting
+
+outfile=$dir_to_save/block_$((n_blocks + 1)).xml
+# since we only the for the final splitting we need not use the count_bytes for the iflag.
+dd if=$bzippedfile of=$outfile.bz2 skip=$start iflag=skip_bytes status='none'
+
+# recover the .bz2 files
+bzip2recover $outfile.bz2 2>/dev/null
+lbzip2 -dc $dir_to_save/rec*block_$((n_blocks + 1))*.bz2 > $outfile
+rm $dir_to_save/*.bz2
+sed -i -e $'1 s/^/<doc>\\\n/' -e '$s/<\/mediawiki>/<\/doc>/' $outfile
+
+# name of preprocessed txt file
+preprocessed_file=../preprocessed_data/all_wiki/block_$((n_blocks + 1))_article_txt.txt
+
+xmllint --xpath "$xml_query" $outfile | tr "[A-Z]\n" "[a-z] " | sed -e $'s/<text xml:space="preserve">/\\\n/g' | sed 's/<\/text>//g' > $preprocessed_file
+
+# remove .xml files to free physical memory
+rm $outfile

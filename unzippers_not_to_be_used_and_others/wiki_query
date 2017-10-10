@@ -1,0 +1,15 @@
+#!/bin/bash
+
+read -p 'Please enter you wikipedia query: ' query
+
+echo You queried: $query
+echo ============================================
+result_folder = ../query_results
+
+# find all files in the preprocessed_data directory (and only in that folder no subdirectories). Then pass those files to xargs, which allows several processes to run simultaneously using maximum of 20 processes - alleviating I/O limitations.
+#the -I {} options of the xargs, allows us to reuse the argument name passed to each xargs in the commands - i.e. python some_script {}, where {} is an argument to some_script
+#find ../preprocessed_data/ -maxdepth 1 -name "*.txt" -print | xargs -I{} -L1 -P 20 -n 500 ./find_queries {} $query >> query_results/$query_result.txt
+
+# wait till all processes are done
+#wait
+

@@ -1,0 +1,9 @@
+#!/bin/bash
+
+count=$(python query.py --query $1 --wiki_size $2 $3)
+outfile=../query_results/"$2/$1_results.txt"
+result_files="../query_results/$2/"*Handle*
+cat $result_files > $outfile
+rm $result_files
+sed -i "1 s/^/$count\n/" $outfile
+echo $count

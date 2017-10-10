@@ -1,0 +1,145 @@
+#!/bin/bash
+
+# about dd:
+
+# https://www.gnu.org/software/coreutils/manual/html_node/dd-invocation.html
+
+#
+
+#################################################
+
+# understanding # #> 
+# > file redirects stdout to file
+# 1> file redirects stdout to file
+#2> file redirects stderr to file
+#&> file redirects stdout and stderr to file
+
+
+# /dev/null is the null device it takes any input you want and throws it away. It can be used to suppress any output.
+
+# Thus 2> /dev/null redirect anyuthing from stderr and ignores it
+
+#################################################
+
+# question: include stuff such as templates etc....?
+
+bzippedfile=../zipped_data/enwiki-20170820-pages-articles-multistream.xml.bz2
+dir_to_save=../unzipped_data/all_wiki
+start=0
+end=0
+let n_blocks=0
+let count_lines=0
+xml_query_text='/doc/page[not(redirect)]//text'
+xml_query_title='/doc/page[not(redirect)]/title/text()'
+index_file=../zipped_data/enwiki-20170820-pages-articles-multistream-index.txt
+
+
+
+
+# count number of articles starting with a
+number_A_articles=$(grep -n '.*:[Aa].*' $index_file | wc -l)
+# get roughly four equally files per cores (8)
+articles_for_cores=$(($number_A_articles / 31))
+
+
+# pass output from cut using process substitution otherwise variable insode the while loop is not shared outside the loop.
+while read -r line; do
+	if [[ $(($count_lines % $articles_for_cores)) == 0 ]] ; then
+	
+		end=$line
+		if [[ $count_lines > 0 ]] ; then
+			let n_blocks++
+			# $((arithmatic expression)) does calculations
+			outfile=$dir_to_save/block_$((n_blocks)).xml
+			# count the offset ie. how many bytes to take out.
+			let off_set=$end-$start
+			dd if=$bzippedfile of=$outfile.bz2 skip=$start count=$off_set status='none' iflag=skip_bytes,count_bytes
+			# recover the .bz2 files
+			bzip2recover $outfile.bz2 2>/dev/null
+
+			lbzip2 -dc $dir_to_save/rec*block_$((n_blocks))*.bz2 > $outfile
+			rm $dir_to_save/*.bz2
+			sed -i $'1 s/^/<doc>\\\n/' $outfile
+			echo "</doc>" >> $outfile
+			# generate tmp files
+			tmpfile_txt=$(mktemp /tmp/block_$((n_blocks))_article_text.XXXXX)
+			tmpfile_title=$(mktemp /tmp/block_$((n_blocks))_article_title.XXXXX)
+			tmpfile_combined=$(mktemp /tmp/block_$((n_blocks))_article_combined.XXXXX)
+			tmpfile_sorted=$(mktemp /tmp/block_$((n_blocks))_article_sorted_txt.XXXXX)
+			# preprocessing first part use -c to copy the entire tag
+			# use -v to print the value of the final tag
+			# do not print first line, as this will be an empty newline (tail -n +2)
+			xmlstarlet sel -t -c $xml_query_text $outfile | tr "[A-Z]\n" "[a-z] " | sed -e $'s/<text xml:space="preserve">/\\\n/g' -e 's/<\/text>//g' | tail -n +2 > $tmpfile_txt
+			xmlstarlet sel -t -v $xml_query_title $outfile > $tmpfile_title
+			
+			# remove .xml files to free physical memory
+			rm $outfile
+			
+			# join 
+			join -t ":" -1 1 -2 1 <(grep -n '^' $tmpfile_title) <(grep -n '^' $tmpfile_txt) > $tmpfile_combined
+			# name of preprocessed txt file
+			preprocessed_file=../preprocessed_data/all_wiki/block_$((n_blocks))_article_txt.txt
+			sort -t : -k 2,2 $tmpfile_combined > $tmpfile_sorted
+			cut -d : -f 3- $tmpfile_sorted > $preprocessed_file
+			grep -n '^' $tmpfile_sorted | cut -d : -f 1 > ../preprocessed_data/all_wiki/block_$((n_blocks))_article_index.txt
+			cut -d : -f 2 $tmpfile_combined | grep -n '^A' | cut -d : -f 1 | tail -n 1 > ../preprocessed_data/all_wiki/block_$((n_blocks))_article_A_final_index.txt
+			
+			#remove tmp files
+			rm $tmpfile_txt $tmpfile_title $tmpfile_combined $tmpfile_sorted_txt
+	
+		fi
+		start=$end
+		
+		# if statement used for debugging
+		
+		#if [[ $n_blocks == 1 ]] ; then
+		#	break
+		#fi
+		
+	fi
+	
+	let count_lines++
+
+done < <( cut -d : -f 1 $index_file)
+# once reached end of the line do a final splitting
+
+
+outfile=$dir_to_save/block_$((n_blocks + 1)).xml
+# since we only the for the final splitting we need not use the count_bytes for the iflag.
+dd if=$bzippedfile of=$outfile.bz2 skip=$start iflag=skip_bytes status='none'
+
+# recover the .bz2 files
+bzip2recover $outfile.bz2 2>/dev/null
+lbzip2 -dc $dir_to_save/rec*block_$((n_blocks+1))*.bz2 > $outfile
+rm $dir_to_save/*.bz2
+sed -i -e $'1 s/^/<doc>\\\n/' -e '$s/<\/mediawiki>/<\/doc>/' $outfile
+
+# get the remainng articles
+
+
+tmpfile_txt=$(mktemp /tmp/block_$((n_blocks + 1))_article_text.XXXXX)
+tmpfile_title=$(mktemp /tmp/block_$((n_blocks + 1))_article_title.XXXXX)
+tmpfile_combined=$(mktemp /tmp/block_$((n_blocks + 1))_article_combined.XXXXX)
+tmpfile_sorted_txt=$(mktemp /tmp/block_$((n_blocks + 1 ))_article_sorted_txt.XXXXX)
+xmlstarlet sel -t -c $xml_query_text $outfile | tr "[A-Z]\n" "[a-z] " | sed -e $'s/<text xml:space="preserve">/\\\n/g' -e 's/<\/text>//g' | tail -n +2 > $tmpfile_txt
+xmlstarlet sel -t -v $xml_query_title $outfile > $tmpfile_title
+
+# remove .xml files to free physical memory
+rm $outfile
+
+# join 
+join -t ":" -1 1 -2 1 <(grep -n '^' $tmpfile_title) <(grep -n '^' $tmpfile_txt) > $tmpfile_combined
+# name of preprocessed txt file
+preprocessed_file=../preprocessed_data/all_wiki/block_$((n_blocks + 1))_article_txt.txt
+
+sort -t : -k 2,2 $tmpfile_combined > $tmpfile_sorted
+cut -d : -f 3- $tmpfile_sorted > $preprocessed_file
+grep -n '^' $tmpfile_sorted | cut -d : -f 1 > ../preprocessed_data/all_wiki/block_$((n_blocks + 1))_article_title.txt
+cut -d : -f 2 $tmpfile_combined | grep -n '^A' | cut -d : -f 1 | tail -n 1 > ../preprocessed_data/all_wiki/block_$((n_blocks + 1))_article_A_final_index.txt
+
+#remove tmp files
+rm $tmpfile_txt $tmpfile_title $tmpfile_combined $tmpfile_sorted_txt
+
+
+
+
